@@ -1,7 +1,7 @@
 // Product verdict: Buy / Think about it / Not worth it (port of ml/verdict.py).
 // Inputs are ML outputs: overspend risk, market price from our database, the family's usual prices, goals.
 import { FORECAST_CATEGORIES } from "./features.js";
-import { CATEGORY_NAMES, monthlyFreeCash, planGoals, riskRow, familyState, usualP90, AVG_DAYS_IN_MONTH } from "./finance.js";
+import { CATEGORY_NAMES, monthlyFreeCash, planGoals, riskRow, familyState, usualP90, yearlyIncome, AVG_DAYS_IN_MONTH } from "./finance.js";
 import { daysInMonth, dayOf, monthIndex, firstOfMonth, parse } from "./dates.js";
 
 const RED_RISK = 0.75, MIN_RISK_JUMP = 0.05, MIN_THINK_JUMP = 0.02, MARKET_TOLERANCE = 0.10, MIN_GOAL_PRICE = 20;
@@ -118,6 +118,24 @@ export function checkPurchase(app, { title = "", price, url = "", category = nul
     warnThreshold: threshold, usualP90: usualP90(tx, cat, today), marketLow: market?.low ?? null, marketHigh: market?.high ?? null,
     goalName: goal?.name, goalBehind: !!goal && !isNeed, goalDelayDays: delay });
 
+  // Sanity rules on top of decide() (which stays a line-by-line port of ml/verdict.py, checked by 1,536 cases).
+  // decide() can only object when it has something to compare with: a forecast, the family's usual prices, a market
+  // price or a goal. A new family has none of these, so without the two rules below any price came out as "Worth it".
+  const monthIncome = yearlyIncome(tx, today) / 12;
+  const historyMonths = new Set(tx.map((t) => monthIndex(t.date))).size - 1; // full months before this one
+  const usual = usualP90(tx, cat, today);
+  if (monthIncome > 0 && price > monthIncome) {
+    // 1. More than the family earns in a month is never "Worth it" on its own, need or want.
+    v.decision = "not_worth_it";
+    v.checks.beyond_income = true;
+    v.reasons = [`This costs more than your family earns in a month (about ${money(monthIncome)}).`, ...v.reasons.filter((x) => !x.startsWith("Fits your budget") && !x.includes("counts as a need"))];
+  } else if (v.decision === "buy" && !isNeed && !before && usual == null && !market) {
+    // 2. Nothing to compare with: say so instead of claiming that the price fits.
+    v.decision = "think";
+    v.checks.no_history = true;
+    v.reasons = [`FinPilot has no ${name} history for your family yet, so it cannot tell whether this fits. A few weeks of entries in Money will fix that.`];
+  }
+
   let reasonable = null;
   if (before && !isNeed) reasonable = reasonablePrice((x) => riskRow(models, state, cat, today, x).p, threshold, Math.max(price * 3, 50));
   const { y, m } = parse(today);
@@ -128,7 +146,7 @@ export function checkPurchase(app, { title = "", price, url = "", category = nul
     left_this_month: before ? before.row.budget - before.row.spent_to_date : null, days_left: daysInMonth(y, m) - dayOf(today),
     usual_rest_of_month: before ? before.row.hist_after_day_ratio * before.row.budget : null,
     market, market_unclear: marketUnclear && { low: marketUnclear.low, high: marketUnclear.high }, reasonable_price: reasonable, no_room_this_month: !!before && !isNeed && reasonable === null,
-    next_month_starts: firstOfMonth(monthIndex(today) + 1), goal: goal?.name || null, goal_delay_days: delay, free_cash: free, title, price, url,
+    next_month_starts: firstOfMonth(monthIndex(today) + 1), goal: goal?.name || null, goal_delay_days: delay, free_cash: free, month_income: monthIncome, history_months: historyMonths, title, price, url,
   };
   return { ...r, explain: explainVerdict(r) };
 }
@@ -148,6 +166,7 @@ export function explainVerdict(r) {
       : `${r.category_name}: already ${money(-left)} over your usual ${money(r.budget)} this month (${days}).`;
   } else {
     family = r.free_cash > 0 ? `Your family keeps about ${money(r.free_cash)} a month after all spending.`
+      : r.history_months === 0 ? "FinPilot has less than a month of your family's history, so it cannot say yet how much you keep each month."
       : "Your family currently spends about everything it earns.";
   }
   let why = r.reasons.find((x) => !x.startsWith("Similar items cost") && !x.startsWith("The price is in the upper half")) || null;
@@ -166,7 +185,7 @@ export function explainVerdict(r) {
   } else if (r.market_unclear) {
     market = { average: null, text: `No close match in our price database: items with similar names cost ${money(r.market_unclear.low)}–${money(r.market_unclear.high)} (often accessories or other versions).` };
   }
-  const fair = r.decision === "buy" ? null : r.reasonable_price ? `A price that fits your budget now: up to ${money(r.reasonable_price)}.`
+  const fair = r.decision === "buy" ? null : r.checks?.beyond_income && !r.reasonable_price ? null : r.reasonable_price ? `A price that fits your budget now: up to ${money(r.reasonable_price)}.`
     : r.no_room_this_month ? `No price fits your ${r.category_name} budget this month; a fresh month starts ${niceDate(r.next_month_starts)}.` : null;
   return { family, why, market, fair };
 }

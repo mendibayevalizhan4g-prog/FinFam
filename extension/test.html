@@ -173,6 +173,24 @@ check("PayPal profile from the login id_token", fromToken.email === "jane@exampl
 const own = pp.ownPayments(shop);
 check("PayPal import when the shop account itself is connected: whole history, signs as they are", own.length === 3 && own[0].amount === 42.5 && own[2].amount === -10, JSON.stringify(own));
 
+// Sanity rules for a family with almost no history (before: a laptop for $100,000,000,000,000,000 came out as "Worth it")
+await store.lock();
+await store.createFamily("The Newcomers", generatePassword(), 0);
+await store.addEntry({ kind: "income", amount: 7200, description: "Salary", date: "2026-11-05" });
+await store.addEntry({ kind: "expense", amount: 2141, description: "Rent for November", date: "2026-11-06" });
+const newApp = { models: m, market, store, today: "2026-11-15" };
+const absurd = answer(newApp, "should i buy a laptop for 100000000000000000 USD this month?");
+check("a price above a month of income is never 'Worth it'", absurd.reply.startsWith("Not worth it") && absurd.reply.includes("more than your family earns in a month (about $7,200)") && !absurd.reply.includes("Fits your budget"), absurd.reply);
+const yacht = checkPurchase(newApp, { title: "Yacht", price: 7201 }), tv = checkPurchase(newApp, { title: "Samsung 55 inch TV", price: 7200 });
+check("the income rule starts right above a month of income", yacht.decision === "not_worth_it" && yacht.checks.beyond_income && !tv.checks.beyond_income, `${yacht.decision} ${tv.decision}`);
+const gadget = checkPurchase(newApp, { title: "Mystery gadget zzqx", price: 300 });
+check("no history, no forecast, no market price -> 'Think about it', and it says why", (gadget.decision !== "buy") && (gadget.market || gadget.checks.no_history) && !gadget.reasons.join(" ").includes("Fits your budget"), `${gadget.decision} ${gadget.reasons.join(" | ")}`);
+check("a new family is not told that it spends everything it earns", !gadget.explain.family.includes("spends about everything"), gadget.explain.family);
+await store.deleteFamily();
+await store.unlock(DEMO_PASSWORD);
+const need1 = checkPurchase(app, { title: "TI-84 Plus graphing calculator for school", price: 90000 });
+check("the income rule also covers needs (a $90,000 calculator)", need1.kind === "need" && need1.decision === "not_worth_it" && need1.checks.beyond_income, `${need1.decision} ${need1.reasons[0]}`);
+
 // Money: monthly income added by itself, possible duplicates after a PayPal import, history sort and filter
 const { historyView } = await import("./views/money.js");
 await store.lock();
