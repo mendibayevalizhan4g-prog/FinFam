@@ -185,4 +185,4 @@ AI tools: we used the Google Gemini API (`gemini-3.5-flash`, `gemini-3.5-flash-l
 
 ## Team
 
-[names, schools]
+[Alizhan, Mukhammadsolikh. NIS Almaty Medeu]
