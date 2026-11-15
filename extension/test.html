@@ -186,8 +186,28 @@ check("the income rule starts right above a month of income", yacht.decision ===
 const gadget = checkPurchase(newApp, { title: "Mystery gadget zzqx", price: 300 });
 check("no history, no forecast, no market price -> 'Think about it', and it says why", (gadget.decision !== "buy") && (gadget.market || gadget.checks.no_history) && !gadget.reasons.join(" ").includes("Fits your budget"), `${gadget.decision} ${gadget.reasons.join(" | ")}`);
 check("a new family is not told that it spends everything it earns", !gadget.explain.family.includes("spends about everything"), gadget.explain.family);
+// The same family a bit later: $5,241 spent of $7,200, a $799 tablet on Amazon (was "Worth it. Your family currently spends about everything it earns. Fits your budget and your usual prices.")
+for (const [d, a, day] of [["Car repair", 2808, "08"], ["Amazon headphones", 150, "09"], ["Amazon desk lamp", 142, "10"]]) await store.addEntry({ kind: "expense", amount: a, description: d, date: `2026-11-${day}`, category: d.startsWith("Amazon") ? "shopping" : "transport" });
+const tablet = { title: "reMarkable Paper Pro with Marker Plus", url: "https://www.amazon.com/dp/B0DG9VSBLS" };
+const t799 = checkPurchase(newApp, { ...tablet, price: 799 }), t2500 = checkPurchase(newApp, { ...tablet, price: 2500 });
+const oldLines = (r) => /spends about everything it earns|Fits your budget and your usual prices/.test([r.explain.family, r.explain.why, ...r.reasons].join(" "));
+check("no forecast yet: the card shows this month's real money (in, spent, left, left after the purchase)",
+  t799.explain.family === "This month: $7,200 came in, $5,241 is spent, $1,959 is left. After this $799: $1,160.", t799.explain.family);
+check("no forecast, under 5 purchases in the category, no market match -> 'Think about it' with the reason, not 'Worth it'",
+  t799.decision === "think" && (t799.market ? true : t799.checks.no_history && t799.explain.why.includes("at least 5 of your Shopping purchases")), `${t799.decision} | ${t799.explain.why}`);
+check("more than what is left of this month's income -> 'Think about it', says it would come out of savings",
+  t2500.decision === "think" && t2500.checks.beyond_month_cash && t2500.explain.why.includes("more than the $1,959 left from this month's income"), `${t2500.decision} | ${t2500.explain.why}`);
+for (const [d, a, day] of [["Amazon books", 40, "11"], ["Amazon shoes", 95, "12"], ["Amazon mug", 18, "13"], ["Amazon cable", 12, "14"]]) await store.addEntry({ kind: "expense", amount: a, description: d, date: `2026-11-${day}`, category: "shopping" });
+const cheap = checkPurchase(newApp, { title: "Zzqx plain item", price: 60, url: "https://www.amazon.com/dp/x1" }), dear = checkPurchase(newApp, { title: "Zzqx plain item", price: 600, url: "https://www.amazon.com/dp/x1" });
+check("with 5+ purchases in the category the usual price is checked: 'Worth it' says what was checked, a far higher price is 'Not worth it'",
+  (cheap.decision !== "buy" || cheap.reasons[0].startsWith("Checked: ")) && dear.decision === "not_worth_it", `${cheap.decision} | ${cheap.reasons[0]} || ${dear.decision} | ${dear.reasons[0]}`);
+check("the two vague lines are gone from every answer above", ![t799, t2500, cheap, dear, gadget, yacht, tv].some(oldLines), [t799, t2500, cheap, dear, gadget, yacht, tv].filter(oldLines).map((r) => r.price).join(","));
 await store.deleteFamily();
 await store.unlock(DEMO_PASSWORD);
+const demoBuys = [["Colgate toothpaste", 4, "https://www.amazon.com/dp/t1"], ["Movie ticket", 9, "https://www.fandango.com/m1"], ["Pizza", 12, "https://www.doordash.com/p1"], ["Phone case", 11, "https://www.amazon.com/dp/c1"]]
+  .map(([title, price, url]) => checkPurchase(app, { title, price, url }));
+check("demo family: every answer gives a concrete reason, never the two vague lines", demoBuys.every((r) => r.reasons.length && !oldLines(r)),
+  demoBuys.map((r) => `${r.decision}: ${r.reasons[0]}`).join(" || "));
 const need1 = checkPurchase(app, { title: "TI-84 Plus graphing calculator for school", price: 90000 });
 check("the income rule also covers needs (a $90,000 calculator)", need1.kind === "need" && need1.decision === "not_worth_it" && need1.checks.beyond_income, `${need1.decision} ${need1.reasons[0]}`);
 

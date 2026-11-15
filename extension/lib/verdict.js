@@ -1,7 +1,7 @@
 // Product verdict: Buy / Think about it / Not worth it (port of ml/verdict.py).
 // Inputs are ML outputs: overspend risk, market price from our database, the family's usual prices, goals.
 import { FORECAST_CATEGORIES } from "./features.js";
-import { CATEGORY_NAMES, monthlyFreeCash, planGoals, riskRow, familyState, usualP90, yearlyIncome, AVG_DAYS_IN_MONTH } from "./finance.js";
+import { CATEGORY_NAMES, isSpending, monthlyFreeCash, planGoals, riskRow, familyState, usualP90, yearlyIncome, AVG_DAYS_IN_MONTH } from "./finance.js";
 import { daysInMonth, dayOf, monthIndex, firstOfMonth, parse } from "./dates.js";
 
 const RED_RISK = 0.75, MIN_RISK_JUMP = 0.05, MIN_THINK_JUMP = 0.02, MARKET_TOLERANCE = 0.10, MIN_GOAL_PRICE = 20;
@@ -120,20 +120,43 @@ export function checkPurchase(app, { title = "", price, url = "", category = nul
 
   // Sanity rules on top of decide() (which stays a line-by-line port of ml/verdict.py, checked by 1,536 cases).
   // decide() can only object when it has something to compare with: a forecast, the family's usual prices, a market
-  // price or a goal. A new family has none of these, so without the two rules below any price came out as "Worth it".
+  // price or a goal. A new family has none of these, so without these rules any price came out as "Worth it".
   const monthIncome = yearlyIncome(tx, today) / 12;
   const historyMonths = new Set(tx.map((t) => monthIndex(t.date))).size - 1; // full months before this one
   const usual = usualP90(tx, cat, today);
+  const thisMonth = tx.filter((t) => monthIndex(t.date) === monthIndex(today) && t.source !== "allowance");
+  const cashIn = thisMonth.filter((t) => t.category === "income").reduce((a, t) => a + t.amount, 0);
+  const cashOut = -thisMonth.filter(isSpending).reduce((a, t) => a + t.amount, 0);
+  const cashLeft = cashIn > 0 ? cashIn - cashOut : null; // what is left of this month's income; null if no income is written yet
+  const FITS = "Fits your budget and your usual prices."; // decide()'s default line: true only if there was something to check
   if (monthIncome > 0 && price > monthIncome) {
     // 1. More than the family earns in a month is never "Worth it" on its own, need or want.
     v.decision = "not_worth_it";
     v.checks.beyond_income = true;
-    v.reasons = [`This costs more than your family earns in a month (about ${money(monthIncome)}).`, ...v.reasons.filter((x) => !x.startsWith("Fits your budget") && !x.includes("counts as a need"))];
-  } else if (v.decision === "buy" && !isNeed && !before && usual == null && !market) {
-    // 2. Nothing to compare with: say so instead of claiming that the price fits.
-    v.decision = "think";
-    v.checks.no_history = true;
-    v.reasons = [`FinPilot has no ${name} history for your family yet, so it cannot tell whether this fits. A few weeks of entries in Money will fix that.`];
+    v.reasons = [`This costs more than your family earns in a month (about ${money(monthIncome)}).`, ...v.reasons.filter((x) => x !== FITS && !x.includes("counts as a need"))];
+  } else if (v.decision === "buy" && !isNeed && !before) {
+    // No forecast for this category yet, so the month's own money is the only budget check there is.
+    if (cashLeft != null && price > cashLeft) {
+      // 2. More than what is left of this month's income.
+      v.decision = "think";
+      v.checks.beyond_month_cash = true;
+      v.reasons = [cashLeft > 0 ? `This is more than the ${money(cashLeft)} left from this month's income, so it would come out of savings.`
+        : "This month's income is already spent, so this would come out of savings."];
+    } else if (usual == null && !market) {
+      // 3. Nothing to compare the price with: say so instead of claiming that it fits.
+      v.decision = "think";
+      v.checks.no_history = true;
+      v.reasons = [`FinPilot cannot judge this price yet: it needs at least 5 of your ${name} purchases or a close match in the price database.`];
+    }
+  }
+  // "Worth it" always says what was actually checked.
+  if (v.decision === "buy" && v.reasons[0] === FITS) {
+    const parts = [];
+    if (after) parts.push(`the chance of overspending on ${name} stays at ${pct(after.p)}`);
+    if (usual != null) parts.push(`the price is within what your family usually pays for ${name} (9 of 10 purchases are under ${money(usual)})`);
+    if (market) parts.push("the price is not above similar items");
+    if (!parts.length && cashLeft != null) parts.push("it fits what is left of this month's income");
+    if (parts.length) { const t = parts.join(", and "); v.reasons[0] = `Checked: ${t}.`; }
   }
 
   let reasonable = null;
@@ -146,7 +169,7 @@ export function checkPurchase(app, { title = "", price, url = "", category = nul
     left_this_month: before ? before.row.budget - before.row.spent_to_date : null, days_left: daysInMonth(y, m) - dayOf(today),
     usual_rest_of_month: before ? before.row.hist_after_day_ratio * before.row.budget : null,
     market, market_unclear: marketUnclear && { low: marketUnclear.low, high: marketUnclear.high }, reasonable_price: reasonable, no_room_this_month: !!before && !isNeed && reasonable === null,
-    next_month_starts: firstOfMonth(monthIndex(today) + 1), goal: goal?.name || null, goal_delay_days: delay, free_cash: free, month_income: monthIncome, history_months: historyMonths, title, price, url,
+    next_month_starts: firstOfMonth(monthIndex(today) + 1), goal: goal?.name || null, goal_delay_days: delay, free_cash: free, month_income: monthIncome, history_months: historyMonths, cash_in: cashIn, cash_out: cashOut, cash_left: cashLeft, title, price, url,
   };
   return { ...r, explain: explainVerdict(r) };
 }
@@ -165,9 +188,13 @@ export function explainVerdict(r) {
         (r.price > left ? ` This ${money(r.price)} would put you ${money(r.price - left)} over.` : usual)
       : `${r.category_name}: already ${money(-left)} over your usual ${money(r.budget)} this month (${days}).`;
   } else {
-    family = r.free_cash > 0 ? `Your family keeps about ${money(r.free_cash)} a month after all spending.`
-      : r.history_months === 0 ? "FinPilot has less than a month of your family's history, so it cannot say yet how much you keep each month."
-      : "Your family currently spends about everything it earns.";
+    // No forecast for this category: show this month's real money instead of a guess about the family.
+    family = r.cash_left != null
+      ? `This month: ${money(r.cash_in)} came in, ${money(r.cash_out)} is spent, ${r.cash_left >= 0 ? `${money(r.cash_left)} is left` : `${money(-r.cash_left)} over`}.` +
+        (r.cash_left >= r.price ? ` After this ${money(r.price)}: ${money(r.cash_left - r.price)}.` : "")
+      : r.free_cash > 0 ? `Your family keeps about ${money(r.free_cash)} a month after all spending.`
+      : r.history_months === 0 ? "No income is written in Money yet, so FinPilot cannot check this against your budget."
+      : "Over the last months your family spent about as much as it earned.";
   }
   let why = r.reasons.find((x) => !x.startsWith("Similar items cost") && !x.startsWith("The price is in the upper half")) || null;
   if (why && /^Chance of going over/.test(why) && r.risk_after != null) {
