@@ -1,7 +1,7 @@
 // The family's data, kept only on this computer (chrome.storage.local).
 // One family = one 6-character password (letters and digits). Only a salted hash of it is stored.
 import { normalize, withSign } from "./ml.js";
-import { addDays, addMonths, monthIndex, todayStr } from "./dates.js";
+import { addDays, addMonths, daysBetween, daysInMonth, fmt, monthIndex, todayStr } from "./dates.js";
 
 const SALT_KEY = "finpilot:salt", CURRENT_KEY = "finpilot:current", FAMILY_PREFIX = "finpilot:family:";
 export const DEMO_PASSWORD = "DEMO26";
@@ -36,6 +36,8 @@ async function familyKey(password) {
 
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 const byDate = (a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+const cents = (x) => Math.round(Number(x) * 100);
+const DUP_DAYS = 3; // a PayPal payment and a hand-written one this close, with the same amount, may be the same money
 
 export class Store {
   constructor(models) { this.models = models; this.key = null; this.data = null; }
@@ -69,7 +71,7 @@ export class Store {
     if (await backend.get(key)) throw new Error("This password is already used by another family. Pick another one.");
     this.key = key;
     this.data = { family: { name: name.trim() || "Our family", children: Number(children) || 0, is_demo: false },
-      transactions: [], corrections: {}, goals: [], plans: [], postponed: [], settings: {} };
+      transactions: [], corrections: {}, goals: [], plans: [], postponed: [], incomes: [], settings: {} };
     await this.save();
     await backend.set(CURRENT_KEY, key);
   }
@@ -98,10 +100,90 @@ export class Store {
   async addTransactions(items, source) {
     const ids = new Set(this.data.transactions.map((t) => t.id));
     const fresh = this.categorize(items.filter((t) => !ids.has(t.id)).map((t) => ({ ...t, source: t.source || source })));
+    this.markDuplicates(fresh);
     this.data.transactions.push(...fresh);
     this.data.transactions.sort(byDate);
     await this.save();
     return fresh.length;
+  }
+
+  // ---------------------------------------------------------------- possible duplicates (PayPal vs written by hand)
+
+  // The same money can arrive twice: once written by the family (or added as the monthly income) and once
+  // imported from PayPal. We never delete on our own: the new entry gets `dup_of` and History asks the family.
+  markDuplicates(fresh) {
+    const taken = new Set(this.data.transactions.filter((t) => t.dup_of).map((t) => t.dup_of));
+    for (const t of fresh) {
+      if (t.dup_of || t.dup_checked) continue;
+      const fromPaypal = t.source === "paypal";
+      const twin = this.data.transactions.find((o) => (o.source === "paypal") !== fromPaypal && !o.dup_of && !o.dup_checked && !taken.has(o.id)
+        && cents(o.amount) === cents(t.amount) && Math.abs(daysBetween(o.date, t.date)) <= DUP_DAYS);
+      if (twin) { t.dup_of = twin.id; taken.add(twin.id); }
+    }
+  }
+
+  duplicates() {
+    const byId = new Map(this.data.transactions.map((t) => [t.id, t]));
+    return this.data.transactions.filter((t) => t.dup_of && byId.has(t.dup_of)).map((t) => ({ entry: t, twin: byId.get(t.dup_of) }));
+  }
+
+  // same = true: it is one payment, keep PayPal's record and drop the hand-written copy. false: two different payments, keep both.
+  async resolveDuplicate(id, same) {
+    const t = this.data.transactions.find((x) => x.id === id);
+    if (!t) throw new Error("Transaction not found.");
+    const twin = this.data.transactions.find((x) => x.id === t.dup_of);
+    delete t.dup_of;
+    t.dup_checked = true;
+    if (twin) twin.dup_checked = true;
+    let removed = null;
+    if (same && twin) {
+      const [keep, drop] = t.source === "paypal" ? [t, twin] : [twin, t];
+      if (drop.category === "income" || drop.category_source === "user") Object.assign(keep, { category: drop.category, category_source: "user" });
+      if (drop.income_id) keep.income_id = drop.income_id;
+      this.data.transactions = this.data.transactions.filter((x) => x.id !== drop.id);
+      removed = drop;
+    }
+    await this.save();
+    return removed;
+  }
+
+  // ---------------------------------------------------------------- monthly income (salary), added by itself every month
+
+  incomes() { return (this.data.incomes ||= []); }
+
+  // day: day of the month the money arrives (29-31 fall on the last day of a shorter month).
+  // since: "YYYY-MM", the first month to add (this month by default; an earlier month fills the history).
+  async addIncome({ name, amount, day, since }, today = todayStr()) {
+    const value = Math.abs(Number(amount));
+    day = Math.round(Number(day));
+    if (!String(name || "").trim()) throw new Error("Name the job or income.");
+    if (!(value > 0)) throw new Error("Enter an amount above $0.");
+    if (!(day >= 1 && day <= 31)) throw new Error("Pay day is a day of the month, 1 to 31.");
+    const cur = monthIndex(today);
+    const first = /^\d{4}-\d{2}$/.test(since || "") ? Math.min(cur, Math.max(cur - 36, monthIndex(`${since}-01`))) : cur;
+    this.incomes().push({ id: uid(), name: name.trim(), amount: value, day, added_through: first - 1 });
+    return this.applyRecurringIncome(today);
+  }
+
+  async deleteIncome(id) { this.data.incomes = this.incomes().filter((i) => i.id !== id); await this.save(); }
+
+  // Adds every monthly income that is due and not added yet, including months when FinPilot was not opened.
+  // `added_through` remembers the last month added, so an entry the family deletes does not come back.
+  async applyRecurringIncome(today = todayStr()) {
+    if (!this.ready) return 0;
+    const cur = monthIndex(today), items = [];
+    for (const inc of this.incomes()) {
+      for (let mi = inc.added_through + 1; mi <= cur; mi++) {
+        const y = Math.floor(mi / 12), m = (mi % 12) + 1;
+        const date = fmt(y, m, Math.min(inc.day, daysInMonth(y, m)));
+        if (date > today) break; // this month's pay day has not come yet
+        items.push({ id: `salary-${inc.id}-${date.slice(0, 7)}`, date, amount: inc.amount, description: inc.name, channel: "manual",
+          category: "income", category_source: "user", source: "salary", income_id: inc.id });
+        inc.added_through = mi;
+      }
+    }
+    if (!items.length) return 0;
+    return this.addTransactions(items, "salary");
   }
 
   async addEntry({ kind, amount, description, date, category }) {

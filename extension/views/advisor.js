@@ -9,7 +9,8 @@ import { $, $$, BAR, busy, closeSheet, dayLabel, esc, formData, money, pct, shee
 const TONE = { buy: "green", think: "amber", not_worth_it: "red" };
 const ICON = { buy: "✓", think: "?", not_worth_it: "✕" };
 const ASK_CHIPS = ["can_spend", "budget_left", "spending", "upcoming", "where_losing", "goals", "postponed"];
-const chat = []; // this panel session's questions and answers
+const chat = []; // this panel session's questions with their answers: { q, a: { text, topic, alternatives, typed } }
+const CHAT_KEEP = 20; // older questions are dropped, so the chat never grows without end
 
 const marketVs = (r) => { const d = r.explain.market.diff; return Math.abs(d) < 0.05 ? "your price is about average" : `your price is ${pct(Math.abs(d))} ${d > 0 ? "above" : "below"}`; };
 
@@ -79,13 +80,17 @@ function goalsBlock(app, free) {
     <button class="btn ghost sm" id="add-goal" style="margin-top:8px">+ Add goal</button>`;
 }
 
+// The chat lives in a window of fixed height. Only the latest question is open; earlier ones fold into one line each.
+function botHtml(m, withAlts) {
+  const meta = m.typed && TOPICS[m.topic] ? `<div class="meta">Understood as: ${esc(TOPICS[m.topic])}${withAlts && m.alternatives.length ? " · not it? try:" : ""}</div>` : "";
+  const alts = withAlts && m.typed && m.alternatives.length ? `<div class="chips alt">${m.alternatives.map((t) => `<button class="chip" data-topic="${t}">${esc(TOPICS[t])}</button>`).join("")}</div>` : "";
+  return `<div class="msg bot">${esc(m.text)}${meta}${alts}</div>`;
+}
 function chatHtml() {
-  return chat.map((m) => {
-    if (m.me) return `<div class="msg me">${esc(m.text)}</div>`;
-    const meta = m.typed ? `<div class="meta">Understood as: ${esc(TOPICS[m.topic])}${m.alternatives.length ? " · not it? try:" : ""}</div>` : "";
-    const alts = m.typed && m.alternatives.length ? `<div class="chips alt">${m.alternatives.map((t) => `<button class="chip" data-topic="${t}">${esc(TOPICS[t])}</button>`).join("")}</div>` : "";
-    return `<div class="msg bot">${esc(m.text)}${meta}${alts}</div>`;
-  }).join("");
+  if (!chat.length) return `<p class="chat-empty small muted">Tap a question above or type your own. Answers come from your family's numbers.</p>`;
+  return chat.map((turn, i) => (i < chat.length - 1
+    ? `<details class="turn"><summary><span class="turn-q">${esc(turn.q)}</span></summary>${botHtml(turn.a, false)}</details>`
+    : `<div class="turn last"><div class="msg me">${esc(turn.q)}</div>${botHtml(turn.a, true)}</div>`)).join("");
 }
 
 export async function advisor(el, app) {
@@ -106,6 +111,12 @@ export async function advisor(el, app) {
         <div><span class="xs muted">Income</span><b class="num">${money(sum.income_this_month)}</b></div>
         <div><span class="xs muted">Kept / month</span><b class="num">${money(sum.free_cash_per_month)}</b></div></div>
     </section>
+    <section class="section ask" aria-labelledby="h-ask">
+      <div class="section-head"><h2 id="h-ask">Ask the advisor</h2><button class="btn ghost sm" id="chat-clear" hidden>Clear</button></div>
+      <div class="chips scroll" id="ask-chips" role="group" aria-label="Quick questions">${ASK_CHIPS.map((t) => `<button class="chip" data-topic="${t}">${esc(TOPICS[t])}</button>`).join("")}</div>
+      <div class="chat" id="chat" aria-live="polite" tabindex="0" aria-label="Advisor answers"></div>
+      <form id="ask" class="ask-row"><input class="input" name="q" placeholder="e.g. how much did we spend on food?" aria-label="Your question" autocomplete="off"><button class="btn primary">Ask</button></form>
+    </section>
     <section class="section" aria-labelledby="h-advice"><h2 id="h-advice" class="section-title">Advice</h2><div class="stack">${adviceCards(app, sum)}</div></section>
     <section class="section" aria-labelledby="h-check"><h2 id="h-check" class="section-title">Is it worth it?</h2>
       <form id="check" class="stack" novalidate>
@@ -116,11 +127,6 @@ export async function advisor(el, app) {
     <section class="section" aria-labelledby="h-left"><div class="section-head"><h2 id="h-left">Left to spend this month</h2><span class="xs muted">vs your usual month</span></div>
       <div id="left">${rows.slice(0, 4).map(leftRow).join("") || `<p class="small muted">Not enough history yet.</p>`}</div>
       ${rows.length > 4 ? `<button class="btn ghost sm" id="all-left">Show all ${rows.length}</button>` : ""}</section>
-    <section class="section" aria-labelledby="h-ask"><h2 id="h-ask" class="section-title">Ask the advisor</h2>
-      <div class="chips">${ASK_CHIPS.map((t) => `<button class="chip" data-topic="${t}">${esc(TOPICS[t])}</button>`).join("")}</div>
-      <div class="chat" id="chat" aria-live="polite" style="margin-top:8px">${chatHtml()}</div>
-      <form id="ask" class="ask-row"><input class="input" name="q" placeholder="e.g. how much did we spend on food?" aria-label="Your question" autocomplete="off"><button class="btn primary">Ask</button></form>
-    </section>
     <section class="section" aria-labelledby="h-goals"><h2 id="h-goals" class="section-title">Goals</h2><div id="goals">${goalsBlock(app, sum.free_cash_per_month)}</div></section>
   </div>`;
 
@@ -141,21 +147,37 @@ export async function advisor(el, app) {
     });
   });
 
-  const showChat = () => {
-    $("#chat", el).innerHTML = chatHtml();
-    $$("#chat [data-topic]", el).forEach((b) => b.addEventListener("click", () => ask(b.textContent, b.dataset.topic)));
-    $("#chat", el).lastElementChild?.scrollIntoView({ block: "nearest" });
+  const showChat = (fresh = false) => {
+    const box = $("#chat", el);
+    box.innerHTML = chatHtml();
+    box.classList.toggle("fresh", fresh); // animate only a new answer, not every redraw
+    $("#chat-clear", el).hidden = !chat.length;
+    $$("[data-topic]", box).forEach((b) => b.addEventListener("click", () => ask(b.textContent, b.dataset.topic)));
+    // The newest question sits at the top of the window, with the previous one peeking above it
+    // (so it is clear that earlier answers are one scroll away). The page itself does not move.
+    const top = $(".turn.last", box)?.previousElementSibling;
+    box.scrollTop = top ? top.offsetTop - 8 : 0;
   };
+  // A mouse wheel moves the line of quick questions sideways.
+  $("#ask-chips", el).addEventListener("wheel", (e) => {
+    const row = e.currentTarget;
+    if (!e.deltaY || row.scrollWidth <= row.clientWidth) return;
+    e.preventDefault();
+    row.scrollLeft += e.deltaY;
+  }, { passive: false });
   const ask = async (text, topic = null) => {
     await app.marketReady;
-    chat.push({ me: true, text });
+    let a;
     try {
-      const a = topic ? { ...answerTopic(app, topic, text), alternatives: [] } : answer(app, text);
-      chat.push({ text: a.reply, topic: a.topic, alternatives: a.alternatives, typed: !topic });
-    } catch (err) { chat.push({ text: err.message }); }
-    showChat();
+      const r = topic ? { ...answerTopic(app, topic, text), alternatives: [] } : answer(app, text);
+      a = { text: r.reply, topic: r.topic, alternatives: r.alternatives || [], typed: !topic };
+    } catch (err) { a = { text: err.message, alternatives: [] }; }
+    chat.push({ q: text, a });
+    chat.splice(0, Math.max(0, chat.length - CHAT_KEEP));
+    showChat(true);
   };
-  $$(".chips > [data-topic]", el).forEach((b) => b.addEventListener("click", () => ask(b.textContent, b.dataset.topic)));
+  $$("#ask-chips > [data-topic]", el).forEach((b) => b.addEventListener("click", () => ask(b.textContent, b.dataset.topic)));
+  $("#chat-clear", el).addEventListener("click", () => { chat.length = 0; showChat(); });
   $("#ask", el).addEventListener("submit", (e) => {
     e.preventDefault();
     const q = e.target.q.value.trim();

@@ -7,7 +7,7 @@ export const dayLabel = (s) => new Date(`${s}T00:00:00`).toLocaleDateString("en-
 export const $ = (s, el = document) => el.querySelector(s);
 export const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 
-const COLORS = ["#0f766e", "#4f46e5", "#be185d", "#b45309", "#0369a1"];
+const COLORS = ["#2f4fd8", "#12885f", "#be185d", "#c97a12", "#0369a1"];
 export const avatar = (name, i, cls = "") => `<span class="avatar ${cls}" style="background:${COLORS[i % COLORS.length]}" aria-hidden="true">${esc((name || "?")[0])}</span>`;
 
 export const LIGHT = { red: ["red", "High risk"], yellow: ["amber", "Watch"], green: ["green", "On track"] };
@@ -19,6 +19,7 @@ export function toast(text, ms = 3500) {
   if (!t) { t = document.createElement("div"); t.className = "toast"; t.setAttribute("role", "status"); document.body.append(t); }
   t.textContent = text;
   t.hidden = false;
+  t.classList.remove("show"); void t.offsetWidth; t.classList.add("show"); // restart the slide-in
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => { t.hidden = true; }, ms);
 }

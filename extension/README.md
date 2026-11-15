@@ -17,13 +17,13 @@ No server and no external AI. Our ML models run in the browser; the family's dat
 |---|---|
 | `panel.html`, `panel.js`, `panel.css` | Side panel: family password lock, then two parts |
 | `views/advisor.js` | Part 1, Advisor: this month, advice cards, Is it worth it?, left to spend, questions, goals |
-| `views/money.js` | Part 2, Money: add expense/income (live ML category), history with fixes, Connect PayPal (Log in with PayPal) |
+| `views/money.js` | Part 2, Money: add expense/income (live ML category), monthly income added by itself, history with sorting, filters and fixes, a "!" on possible duplicates, Connect PayPal (Log in with PayPal) |
 | `content.js`, `detect.js` | On shop pages: finds product and price (schema.org → meta tags → Amazon layout → microdata), shows the card |
 | `background.js` | Runs the engine for the card; opens the panel; right-click “Is this worth it?” |
 | `lib/` | Engine: `ml.js`, `market.js`, `features.js`, `finance.js`, `verdict.js`, `assistant.js`, `paypal.js`, `store.js`, `dates.js`, `ui.js` |
 | `models/` | Trained models exported from Python (`ml/export_extension.py`, `ml/train_price_knn.py`) |
 | `data/` | Demo family and test fixtures |
-| `test.html` | 70 checks that the JS engine matches Python (serve the folder over http and open `test.html?memory`) |
+| `test.html` | 83 checks: the JS engine matches Python, plus monthly income, history sorting and the duplicate check (serve the folder over http and open `test.html?memory`) |
 | `card-test.html` | Developer page: the on-page card on a test product (`?memory&title=...&price=...`) |
 
 ## Privacy

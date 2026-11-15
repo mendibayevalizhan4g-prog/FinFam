@@ -5,9 +5,9 @@
   window.__finpilotLoaded = true;
 
   const D = {
-    buy: { icon: "✓", color: "#15803d", bg: "#f0fdf4", line: "#bbf7d0" },
-    think: { icon: "?", color: "#b45309", bg: "#fffbeb", line: "#fde68a" },
-    not_worth_it: { icon: "✕", color: "#b91c1c", bg: "#fef2f2", line: "#fecaca" },
+    buy: { icon: "✓", color: "#0f7a55", bg: "#e6f6ef", line: "#b5e3cf" },
+    think: { icon: "?", color: "#a35a06", bg: "#fff4dc", line: "#f6dba0" },
+    not_worth_it: { icon: "✕", color: "#b92d45", bg: "#fdecef", line: "#f6c1ca" },
   };
   const money = (x, d = 0) => "$" + Number(x).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -31,10 +31,13 @@
       document.documentElement.appendChild(host);
       root = host.attachShadow({ mode: "open" });
       root.innerHTML = `<style>
-        *{box-sizing:border-box;font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;margin:0}
-        .pill{display:flex;align-items:center;gap:8px;background:#0f172a;color:#fff;border:none;border-radius:999px;padding:10px 15px;font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 10px 30px rgba(15,23,42,.3)}
+        *{box-sizing:border-box;font-family:"Segoe UI Variable Text","Segoe UI",Inter,system-ui,-apple-system,sans-serif;margin:0}
+        @keyframes fp-in{from{opacity:0;transform:translateY(12px) scale(.97)}to{opacity:1;transform:none}}
+        @media (prefers-reduced-motion:reduce){.pill,.card{animation:none!important}}
+        .pill{display:flex;align-items:center;gap:8px;background:linear-gradient(135deg,#18235c,#2a3fae);color:#fff;border:none;border-radius:999px;padding:10px 15px;font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 10px 30px rgba(17,26,54,.35);animation:fp-in .3s cubic-bezier(.2,.8,.2,1) both;transition:transform .15s}
+        .pill:hover{transform:translateY(-1px)}
         .dot{width:18px;height:18px;border-radius:999px;display:inline-grid;place-items:center;font-size:11px;font-weight:800;color:#fff}
-        .card{width:340px;background:#fff;color:#0f172a;border-radius:16px;box-shadow:0 18px 50px rgba(15,23,42,.28);border:1px solid #e2e8f0;overflow:hidden;font-size:14px;line-height:1.45}
+        .card{width:340px;background:#fff;color:#111a36;border-radius:18px;box-shadow:0 18px 50px rgba(17,26,54,.28);border:1px solid #e1e6f2;animation:fp-in .35s cubic-bezier(.2,.8,.2,1) both;overflow:hidden;font-size:14px;line-height:1.45}
         .head{padding:12px 14px;display:flex;gap:10px;align-items:center}
         .icon{width:34px;height:34px;border-radius:999px;display:grid;place-items:center;color:#fff;font-weight:800;font-size:16px;flex:none}
         .verdict{font-weight:800;font-size:20px;line-height:1.15}
@@ -43,16 +46,18 @@
         .body{padding:12px 14px;display:grid;gap:8px}
         .family{font-weight:600}
         .why{color:#334155;font-size:13px}
-        .market{background:#f8fafc;border-radius:10px;padding:8px 10px;display:grid;grid-template-columns:1fr auto;align-items:baseline;gap:0 8px}
+        .market{background:#f3f5fb;border-radius:10px;padding:8px 10px;display:grid;grid-template-columns:1fr auto;align-items:baseline;gap:0 8px}
         .market b{font-size:17px}.market .l{font-size:12px;color:#64748b}.market .s{grid-column:1/-1;font-size:12px;color:#64748b}
         .fair{font-size:13px;font-weight:600}
         .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:2px}
-        .main{background:#0f766e;color:#fff;border:none;border-radius:10px;padding:8px 12px;font-size:13px;font-weight:600;cursor:pointer}
-        .sec{background:#fff;color:#0f172a;border:1px solid #cbd5e1;border-radius:10px;padding:7px 11px;font-size:13px;cursor:pointer}
+        .main{background:#2f4fd8;color:#fff;border:none;border-radius:10px;padding:8px 12px;font-size:13px;font-weight:600;cursor:pointer;transition:background .18s}
+        .main:hover:not(:disabled){background:#2139a8}
+        .sec{background:#fff;color:#111a36;border:1px solid #c9d3fa;border-radius:10px;padding:7px 11px;font-size:13px;cursor:pointer;transition:background .18s}
+        .sec:hover{background:#e9edfd}
         .main:disabled{opacity:.7;cursor:default}
         .foot{padding:7px 14px;font-size:11px;color:#64748b;border-top:1px solid #f1f5f9}
-        .foot a{color:#0f766e;font-weight:600;text-decoration:underline;cursor:pointer}
-        button:focus-visible{outline:2px solid #0f766e;outline-offset:2px}
+        .foot a{color:#2139a8;font-weight:600;text-decoration:underline;cursor:pointer}
+        button:focus-visible{outline:2px solid #2f4fd8;outline-offset:2px}
       </style><div id="box"></div>`;
     }
     return root.getElementById("box");

@@ -33,7 +33,7 @@ function loadMarket() {
 function renderLock() {
   root.innerHTML = `
     <div class="center lock">
-      <div class="brand"><span class="logo" aria-hidden="true">F</span><b>FinPilot</b></div>
+      <div class="brand"><span class="logo lg" aria-hidden="true">F</span><b>FinPilot</b></div>
       <h1>Your family's money advisor</h1>
       <p class="muted small">Built-in ML checks every purchase against your family budget and market prices. No AI keys, and your data stays on this computer.</p>
       <form id="open" class="section stack" novalidate>
@@ -141,8 +141,12 @@ async function renderTab() {
   const el = $("#view");
   if (!el) return;
   el.innerHTML = `<div class="skeleton" style="height:22px;width:50%"></div><div class="skeleton" style="height:90px;margin-top:12px"></div>`;
+  el.classList.remove("enter");
   try {
     await TABS[app.tab][1](el, app);
+    void el.offsetWidth; el.classList.add("enter"); // sections rise in once per tab switch, not on every redraw
+    clearTimeout(renderTab.timer);
+    renderTab.timer = setTimeout(() => el.classList.remove("enter"), 1200);
   } catch (e) {
     console.error(e);
     el.innerHTML = `<div class="section" role="alert"><h2>Something went wrong</h2><p class="muted">${esc(e.message)}</p><button class="btn ghost" id="retry">Try again</button></div>`;
@@ -150,8 +154,17 @@ async function renderTab() {
   }
 }
 
-function start() {
+// Monthly income (salary) is added on pay day, including the months when FinPilot was not opened.
+async function catchUpIncome() {
+  app.today = todayStr();
+  const n = await app.store.applyRecurringIncome(app.today).catch(() => 0);
+  if (n) toast(`Monthly income: ${n} payment${n === 1 ? "" : "s"} added to the history.`, 5000);
+  return n;
+}
+
+async function start() {
   if (!app.store.ready) return renderLock();
+  await catchUpIncome();
   renderShell();
   loadMarket();
 }
@@ -160,7 +173,7 @@ function start() {
   app.models = await loadModels("");
   app.store = new Store(app.models);
   await app.store.resume();
-  start();
+  await start();
 })().catch((e) => { root.innerHTML = `<div class="center" role="alert"><h1>FinPilot could not start</h1><p class="muted">${esc(e.message)}</p></div>`; });
 
 // The on-page card may add data (Postpone); show it when the panel comes back into view.
@@ -169,5 +182,6 @@ document.addEventListener("visibilitychange", async () => {
   const key = app.store.key, rev = app.store.data.rev;
   if (!(await app.store.resume())) return renderLock();
   if (app.store.key !== key) return renderShell(); // another family was opened elsewhere
+  await catchUpIncome();
   if (app.store.data.rev !== rev && !$(".sheet-bg") && !document.activeElement?.matches("input, select, textarea")) renderTab();
 });

@@ -173,6 +173,47 @@ check("PayPal profile from the login id_token", fromToken.email === "jane@exampl
 const own = pp.ownPayments(shop);
 check("PayPal import when the shop account itself is connected: whole history, signs as they are", own.length === 3 && own[0].amount === 42.5 && own[2].amount === -10, JSON.stringify(own));
 
+// Money: monthly income added by itself, possible duplicates after a PayPal import, history sort and filter
+const { historyView } = await import("./views/money.js");
+await store.lock();
+await store.createFamily("The Lees", generatePassword(), 0);
+const addedPay = await store.addIncome({ name: "Salary ACME", amount: 3000, day: 31, since: "2026-08" }, "2026-11-16");
+const payDates = store.data.transactions.map((t) => t.date).join(",");
+check("monthly income: missed months are added, day 31 falls on the month's last day, a pay day still ahead waits",
+  addedPay === 3 && payDates === "2026-08-31,2026-09-30,2026-10-31" && store.data.transactions.every((t) => t.amount === 3000 && t.category === "income" && t.source === "salary"), `${addedPay} ${payDates}`);
+const again = await store.applyRecurringIncome("2026-11-16"), later = await store.applyRecurringIncome("2026-12-01");
+check("monthly income is never added twice; the next month arrives on its pay day", again === 0 && later === 1 && store.data.transactions.at(-1).date === "2026-11-30", `${again} ${later}`);
+await store.deleteTransaction(store.data.transactions.find((t) => t.date === "2026-10-31").id);
+check("a deleted monthly payment does not come back", (await store.applyRecurringIncome("2026-12-01")) === 0 && store.data.transactions.length === 3);
+const job2 = await store.addIncome({ name: "Tutoring", amount: 400, day: 5 }, "2026-12-10");
+check("a second job is added next to the first", job2 === 1 && store.incomes().length === 2 && store.data.transactions.at(-1).date === "2026-12-05", String(job2));
+let badPay = 0; for (const f of [{ name: "", amount: 5, day: 1 }, { name: "x", amount: 0, day: 1 }, { name: "x", amount: 5, day: 40 }]) { try { await store.addIncome(f, "2026-12-10"); } catch (e) { badPay++; } }
+check("monthly income needs a name, an amount and a real day", badPay === 3 && store.incomes().length === 2);
+await store.addEntry({ kind: "expense", amount: 15, description: "Coffee with Sam", date: "2026-12-08" });
+await store.addTransactions([{ id: "pp-D1", date: "2026-12-04", amount: 400, description: "PAYPAL *Tutoring", channel: "online" },
+  { id: "pp-D2", date: "2026-12-09", amount: -15, description: "PAYPAL *Cafe", channel: "online" },
+  { id: "pp-D3", date: "2026-12-09", amount: -62.1, description: "PAYPAL *Shoes", channel: "online" }], "paypal");
+const dups = store.duplicates();
+check("PayPal import: same amount within 3 days of an entry already there is flagged, nothing is deleted",
+  dups.length === 2 && dups[0].entry.id === "pp-D1" && !!dups[0].twin.income_id && dups[1].entry.id === "pp-D2" && store.data.transactions.length === 8, JSON.stringify(dups.map((d) => [d.entry.id, d.twin.id])));
+check("history filter: only possible duplicates", historyView(store.data.transactions, { dup: true }).length === 2);
+const gone = await store.resolveDuplicate("pp-D1", true);
+check("'Yes, the same': one entry stays (PayPal's, as income) and the monthly income does not add it again",
+  gone?.source === "salary" && store.data.transactions.filter((t) => t.amount === 400).length === 1 && store.data.transactions.find((t) => t.id === "pp-D1").category === "income"
+  && (await store.applyRecurringIncome("2026-12-10")) === 0, JSON.stringify(gone));
+const kept = await store.resolveDuplicate("pp-D2", false);
+check("'No, different': both entries stay and the question is not asked again", kept === null && store.duplicates().length === 0 && store.data.transactions.filter((t) => t.amount === -15).length === 2
+  && (await store.addTransactions([{ id: "pp-D2", date: "2026-12-09", amount: -15, description: "PAYPAL *Cafe" }], "paypal")) === 0);
+const hv = (st) => historyView(store.data.transactions, st);
+const sorted = (list, f) => list.every((t, i) => i === 0 || f(list[i - 1], t));
+check("history sort: newest or oldest first", sorted(hv({ sort: "date", dir: "desc" }), (a, b) => a.date >= b.date) && sorted(hv({ sort: "date", dir: "asc" }), (a, b) => a.date <= b.date) && hv({}).length === 7);
+check("history sort: by amount, either way", hv({ sort: "amount", dir: "desc" })[0].amount === 3000 && Math.abs(hv({ sort: "amount", dir: "asc" })[0].amount) === 15);
+check("history sort: by type (income first or expenses first)", hv({ sort: "type", dir: "desc" })[0].amount > 0 && hv({ sort: "type", dir: "asc" })[0].amount < 0
+  && sorted(hv({ sort: "type", dir: "desc" }), (a, b) => (a.amount > 0) >= (b.amount > 0)));
+check("history filter: money in, money out, category, search", hv({ type: "in" }).every((t) => t.amount > 0) && hv({ type: "in" }).length === 4 && hv({ type: "out" }).length === 3
+  && hv({ cat: "income" }).length === 4 && hv({ q: "shoes" }).length === 1 && hv({ q: "income", type: "out" }).length === 0);
+await store.deleteFamily();
+
 const failed = results.filter((r) => !r.ok);
 document.getElementById("out").innerHTML = `<p class="${failed.length ? "bad" : "ok"}"><b>${results.length - failed.length}/${results.length} passed</b></p>` +
   results.map((r) => `<div class="${r.ok ? "ok" : "bad"}">${r.ok ? "✓" : "✗"} ${r.name}${r.ok ? "" : `<pre>${r.detail}</pre>`}</div>`).join("");

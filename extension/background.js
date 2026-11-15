@@ -42,7 +42,7 @@ const CARD_KEY = "finpilot:card_on";
 async function paintCardState() {
   const on = (await chrome.storage.local.get(CARD_KEY))[CARD_KEY] === true;
   chrome.action.setBadgeText({ text: on ? "ON" : "" });
-  chrome.action.setBadgeBackgroundColor({ color: "#15803d" });
+  chrome.action.setBadgeBackgroundColor({ color: "#12885f" });
   chrome.contextMenus.update("finpilot-card-toggle", { title: on ? "Turn shop check off" : "Turn shop check on" }, () => void chrome.runtime.lastError);
 }
 chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes[CARD_KEY]) paintCardState(); });
