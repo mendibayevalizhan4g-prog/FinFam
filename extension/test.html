@@ -202,8 +202,24 @@ const cheap = checkPurchase(newApp, { title: "Zzqx plain item", price: 60, url: 
 check("with 5+ purchases in the category the usual price is checked: 'Worth it' says what was checked, a far higher price is 'Not worth it'",
   (cheap.decision !== "buy" || cheap.reasons[0].startsWith("Checked: ")) && dear.decision === "not_worth_it", `${cheap.decision} | ${cheap.reasons[0]} || ${dear.decision} | ${dear.reasons[0]}`);
 check("the two vague lines are gone from every answer above", ![t799, t2500, cheap, dear, gadget, yacht, tv].some(oldLines), [t799, t2500, cheap, dear, gadget, yacht, tv].filter(oldLines).map((r) => r.price).join(","));
+// A family with a huge income (was: a $100 Starbucks gift card on Amazon -> "Not worth it", because gift cards in the database cost $24-35)
+await store.deleteFamily();
+await store.createFamily("The Riches", generatePassword(), 0);
+await store.addEntry({ kind: "income", amount: 1000000000, description: "Salary", date: "2026-11-03" });
+await store.addEntry({ kind: "expense", amount: 70000, description: "Car", date: "2026-11-04", category: "transport" });
+const gift = checkPurchase(newApp, { title: "Starbucks eGift Card", price: 100, url: "https://www.amazon.com/dp/g1" });
+check("a gift card is not compared with market prices; small change for the family -> 'Worth it', with what was checked",
+  gift.decision === "buy" && gift.market === null && !gift.market_unclear && gift.reasons[0] === "Checked: a gift card is worth what it costs, and it is under 2% of what is left of this month's income.", `${gift.decision} | ${gift.reasons.join(" | ")}`);
+const overpriced = checkPurchase(newApp, { title: "Sony WH-1000XM5 Wireless Noise Canceling Headphones", price: 290, url: "https://www.amazon.com/dp/x" });
+check("above similar items but small change for the family -> 'Think about it' (look for a cheaper one), not 'Not worth it'",
+  !overpriced.checks.above_market || (overpriced.decision === "think" && overpriced.checks.above_market_but_easy && overpriced.reasons.at(-1).startsWith("You can easily afford it")), `${overpriced.decision} | ${JSON.stringify(overpriced.checks)} | ${overpriced.reasons.join(" | ")}`);
+const small = checkPurchase(newApp, { title: "Mystery gadget zzqx", price: 300 });
+check("nothing to compare with, but small change for the family -> 'Worth it'", small.decision === "buy" && !oldLines(small), `${small.decision} | ${small.reasons[0]}`);
+const jet = checkPurchase(newApp, { title: "Private jet", price: 90000000 });
+check("a big price with nothing to compare with still gets 'Think about it', even with a huge income", jet.decision === "think", `${jet.decision} | ${jet.reasons[0]}`);
 await store.deleteFamily();
 await store.unlock(DEMO_PASSWORD);
+check("demo family is unchanged: $348 headphones above the market stay 'Not worth it'", phones.decision === "not_worth_it" && !checkPurchase(app, { title: "Sony WH-1000XM5 Wireless Noise Canceling Headphones", price: 348, url: "https://www.amazon.com/dp/x" }).checks.above_market_but_easy);
 const demoBuys = [["Colgate toothpaste", 4, "https://www.amazon.com/dp/t1"], ["Movie ticket", 9, "https://www.fandango.com/m1"], ["Pizza", 12, "https://www.doordash.com/p1"], ["Phone case", 11, "https://www.amazon.com/dp/c1"]]
   .map(([title, price, url]) => checkPurchase(app, { title, price, url }));
 check("demo family: every answer gives a concrete reason, never the two vague lines", demoBuys.every((r) => r.reasons.length && !oldLines(r)),

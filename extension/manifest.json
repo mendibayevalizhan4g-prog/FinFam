@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FinPilot — is it worth it?",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Family money copilot: Buy, Think about it or Not worth it on any product page. Built-in ML, no AI keys. Prototype, not financial advice.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAlOrVE3o8EeGAlMvhiGSdFIT8YG++i9aTNd3bVxgwSa76UabSqqvpfv5YSEZ4aUC+g1olajEXtl5F7Cda4+h9e+CIQMbHGqC5sAEZt1Pc2tkEG4RaoHCFl9U+Mm+6POI38T7e/3srR+t5yvitG3xDlKXcYqWviSpnN6bggMlt+qEzAKWQrPFncF8mZldSuTI8G8FH5U/iKujV0DEle1U38tpG3luBgsaay326r7YsZcxnLYCwNmGP7DkuimxGuycKWYPz1kzvv4kmbtY5tdadimwPmpmZl0ZnxRXoIHy5eLlYrkMpL9T4hr7gtb+h/v+RYv6n3iNsTB3d/r+Hslah3QIDAQAB",
   "icons": {

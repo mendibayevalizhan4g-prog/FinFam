@@ -8,6 +8,9 @@ const RED_RISK = 0.75, MIN_RISK_JUMP = 0.05, MIN_THINK_JUMP = 0.02, MARKET_TOLER
 // Show a market price only if the listed price is within 3x of the similar items' range (ml/train_price_knn.py:
 // on unseen stores this keeps 96% of items at 32.7% median error; the hidden 4% had 88.6%, mostly accessories with the same name).
 const MARKET_GATE = 3;
+const FACE_VALUE = /\b(e-?gift|gift ?cards?|gift certificate|voucher|prepaid card|top-?up)\b/i;
+// "Easily affordable": the price is at most this share of what is left of this month's income.
+const EASY_SHARE = 0.02;
 const niceDate = (s) => new Date(`${s}T00:00:00`).toLocaleDateString("en-US", { month: "long", day: "numeric" });
 const money = (x) => "$" + Math.round(x).toLocaleString("en-US");
 const pct = (p) => `${Math.round(p * 100)}%`;
@@ -103,6 +106,9 @@ export function checkPurchase(app, { title = "", price, url = "", category = nul
   const kind = s.kindOf(cat), isNeed = kind === "need", name = CATEGORY_NAMES[cat] || cat;
   let market = title.trim() && MARKET_CATEGORIES.has(cat) && app.market ? app.market.lookup(title) : null, marketUnclear = null;
   if (market && (price < market.low / MARKET_GATE || price > market.high * MARKET_GATE)) { marketUnclear = market; market = null; }
+  // A gift card or top-up is worth exactly what it costs: comparing a $100 card with $25 cards in the database says nothing.
+  const faceValue = FACE_VALUE.test(title);
+  if (faceValue) { market = null; marketUnclear = null; }
 
   const state = familyState(tx, s.data.family.children, today);
   const forecastable = FORECAST_CATEGORIES.includes(cat);
@@ -129,6 +135,7 @@ export function checkPurchase(app, { title = "", price, url = "", category = nul
   const cashOut = -thisMonth.filter(isSpending).reduce((a, t) => a + t.amount, 0);
   const cashLeft = cashIn > 0 ? cashIn - cashOut : null; // what is left of this month's income; null if no income is written yet
   const FITS = "Fits your budget and your usual prices."; // decide()'s default line: true only if there was something to check
+  const easy = cashLeft != null && price <= cashLeft * EASY_SHARE; // small change for this family this month
   if (monthIncome > 0 && price > monthIncome) {
     // 1. More than the family earns in a month is never "Worth it" on its own, need or want.
     v.decision = "not_worth_it";
@@ -142,12 +149,20 @@ export function checkPurchase(app, { title = "", price, url = "", category = nul
       v.checks.beyond_month_cash = true;
       v.reasons = [cashLeft > 0 ? `This is more than the ${money(cashLeft)} left from this month's income, so it would come out of savings.`
         : "This month's income is already spent, so this would come out of savings."];
-    } else if (usual == null && !market) {
+    } else if (usual == null && !market && !easy && !faceValue) {
       // 3. Nothing to compare the price with: say so instead of claiming that it fits.
+      //    Not for small change (under 2% of what is left) or a gift card: there the month's money is check enough.
       v.decision = "think";
       v.checks.no_history = true;
       v.reasons = [`FinPilot cannot judge this price yet: it needs at least 5 of your ${name} purchases or a close match in the price database.`];
     }
+  }
+  // 4. The only objection is "costs more than similar items", and the price is small change for this family:
+  //    that is a reason to look around, not to forbid. (decide() alone makes it "Not worth it" for any income.)
+  if (v.decision === "not_worth_it" && easy && v.checks.above_market && !v.checks.high_risk && !v.checks.above_usual && !v.checks.hurts_behind_goal && !v.checks.beyond_income) {
+    v.decision = "think";
+    v.checks.above_market_but_easy = true;
+    v.reasons.push("You can easily afford it, so the only question is whether a cheaper similar item would do.");
   }
   // "Worth it" always says what was actually checked.
   if (v.decision === "buy" && v.reasons[0] === FITS) {
@@ -155,7 +170,8 @@ export function checkPurchase(app, { title = "", price, url = "", category = nul
     if (after) parts.push(`the chance of overspending on ${name} stays at ${pct(after.p)}`);
     if (usual != null) parts.push(`the price is within what your family usually pays for ${name} (9 of 10 purchases are under ${money(usual)})`);
     if (market) parts.push("the price is not above similar items");
-    if (!parts.length && cashLeft != null) parts.push("it fits what is left of this month's income");
+    if (faceValue) parts.push("a gift card is worth what it costs");
+    if (!after && cashLeft != null) parts.push(easy ? `it is under ${Math.round(EASY_SHARE * 100)}% of what is left of this month's income` : "it fits what is left of this month's income");
     if (parts.length) { const t = parts.join(", and "); v.reasons[0] = `Checked: ${t}.`; }
   }
 
